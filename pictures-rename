@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+import argparse
+import time
+import sys
+
+import exif
+
+
+@dataclass
+class Picture:
+    path: Path
+    new_name: str = None
+    exif_data: dict = None
+    date_created: datetime = None
+
+    def rename(self):
+        if self.new_name:
+            self.path.rename(self.path.with_stem(self.new_name))
+        else:
+            raise ValueError("new_name is empty or None")
+    
+    @property
+    def new_path(self) -> Path:
+        return self.path.with_stem(self.new_name)
+    
+    def get_exif(self):
+        image = exif.Image(self.path)    
+
+        if not image.has_exif:
+            raise ValueError(f"Image {self.path} does not have EXIF data")
+        if "datetime_original" not in image.list_all():
+            raise ValueError(f"Image {self.path} does not have DateTimeOriginal EXIF tag")
+        
+        date, time = image.datetime_original.split()
+        Y, M, D = map(int, date.split(':'))
+        h, m, s = map(int, time.split(':'))
+        self.date_created = datetime(Y, M, D, h, m, s)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='pictures-rename',
+        description="Rename photos inside a directory according from EXIF data according to a specific format"
+    )
+    parser.add_argument("-f", "--format", default="%F %T", help="Date format, as per https://strftime.org")
+    parser.add_argument("-n", "--dry-run", default=False, action="store_true", help="Dry run, don't rename files, just show how files would be renamed")
+    parser.add_argument("-c", "--check-order", default=False, action="store_true", help="Check that file order (alphabetical) will be preserved before renaming")
+    parser.add_argument("-t", "--timeit", default=False, action="store_true", help="Mesure how much time it took to read the files metadata and compute the new filenames")
+    parser.add_argument("files", nargs='+', help="Files to rename")
+    args = parser.parse_args()
+
+    files = [Picture(Path(f)) for f in args.files]
+
+    t = time.time()
+
+    # Getting files metadata and computing new names
+    for f in files:
+        f.get_exif()
+        f.new_name = f.date_created.strftime(args.format)
+
+    # Checking for duplicate names    
+    files_by_path = {}
+    for f in files:
+        files_by_path.setdefault(f.new_path, []).append(f)
+
+    for k_path, v_files in files_by_path.items():
+        if len(v_files) > 1:
+            for i, f in enumerate(v_files, start=1):
+                f.new_name += f" ({i})"
+
+    duration = time.time() - t
+
+    # Check that file order stays the same after rename
+    if args.check_order:
+        if sorted(files, key=lambda f: f.path) != sorted(files, key=lambda f: f.new_path):
+            print("File order won't be preserved while renaming, aborting.", file=sys.stderr)
+            exit(3)
+
+    # Actual renaming (if not dry run)
+    for f in files:
+        print("{} -> {}".format(f.path, f.new_path.name))
+        if not args.dry_run:
+            f.rename()
+    
+    if args.timeit:
+        print(f"Took {duration} seconds for {len(files)} files")
+
+
+if __name__ == '__main__':
+    main()
