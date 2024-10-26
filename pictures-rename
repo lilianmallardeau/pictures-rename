@@ -34,10 +34,7 @@ class Picture:
         if "datetime_original" not in image.list_all():
             raise ValueError(f"Image {self.path} does not have DateTimeOriginal EXIF tag")
         
-        date, time = image.datetime_original.split()
-        Y, M, D = map(int, date.split(':'))
-        h, m, s = map(int, time.split(':'))
-        self.date_created = datetime(Y, M, D, h, m, s)
+        self.date_created = datetime.strptime(image.datetime_original, "%Y:%m:%d %H:%M:%S")
 
 
 def main():
